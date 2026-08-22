@@ -1,4 +1,4 @@
-<h1 align="center">p10k-ai-quota ⛽</h1>
+<h1 align="center">p10k-ai-quota</h1>
 
 <p align="center">
   <picture>
@@ -18,25 +18,25 @@
 </p>
 
 <p align="center">
-  <a href="#-quick-start">Install</a> ·
-  <a href="#-how-it-works">How it works</a> ·
-  <a href="#%EF%B8%8F-caveats">Caveats</a> ·
-  <a href="#-is-this-the-right-tool-for-you">Alternatives</a> ·
-  <a href="#-credits">Credits</a>
+  <a href="#quick-start">Install</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#caveats">Caveats</a> ·
+  <a href="#is-this-the-right-tool-for-you">Alternatives</a> ·
+  <a href="#credits">Credits</a>
 </p>
 
 ---
 
-**Codex and Claude remaining quota, right in your zsh prompt.** So you know
-what's left *before* you start something big — without running `/usage`, opening
-a menu bar app, or leaving the terminal.
+**Codex and Claude remaining quota, in your zsh prompt.** So you know what's
+left *before* you start something big, without running `/usage` or leaving the
+terminal.
 
 ```
  ~/work  ............................  Codex 7d 94%  │  Claude 5h 93% 7d 99%
 >
 ```
 
-## 🚀 Quick start
+## Quick start
 
 ```bash
 git clone https://github.com/Jinho1011/p10k-ai-quota
@@ -55,28 +55,29 @@ every file it edits, marks the lines it adds, and is safe to run twice. Try
 |---|---|
 | `--dry-run` | Print every change, modify nothing |
 | `--remove-context` | Also comment out p10k's `context` (`user@host`) segment to free up room. Off by default — it's your prompt. Reversed by `./uninstall.sh`. |
-| `--interval <min>` | Refresh interval, default `5`. Values below 5 are refused; see [Caveats](#%EF%B8%8F-caveats). |
+| `--interval <min>` | Refresh interval, default `5`. Values below 5 are refused; see [Caveats](#caveats). |
 
-## ⚡ Why it's fast
+## Why it's fast
 
-|  | |
-|---|---|
-| **0.047 ms per prompt** | The prompt functions `source` a three-line file. No fork, no `jq`, no Python, no `$(...)`. |
-| **Zero network in the shell** | A background timer does the talking and leaves a pre-rendered string on disk. |
-| **Never goes blank** | Per-metric last-known-good: if one provider is down, the other keeps updating and the stale number grows a `?`. |
+The prompt functions do exactly one thing: `source` a three-line file. No fork,
+no `jq`, no Python, no `$(...)`. That is the whole 0.047 ms. The shell never
+talks to the network — a background timer does that and leaves a pre-rendered
+string on disk. And the numbers don't blank out when something breaks: each
+metric keeps its last known good value, so a dead Codex probe doesn't take the
+Claude numbers with it.
 
 Labels are dim; only the numbers carry colour, and each one is coloured on its
 own so you can see *which* limit is the problem:
 
 | Remaining | Colour | Meaning |
 |---|---|---|
-| 25%+ | 🟢 green | fine |
-| 10–24% | 🟡 yellow | pace yourself |
-| under 10% | 🔴 red | about to hit the wall |
-| `94%?` | ⚪ grey + `?` | last known value, gone stale — probe is failing |
-| `--` | ⚪ grey | never seen a value (not logged in, or that CLI is missing) |
+| 25%+ | green | fine |
+| 10–24% | yellow | pace yourself |
+| under 10% | red | about to hit the wall |
+| `94%?` | grey + `?` | last known value, gone stale — probe is failing |
+| `--` | grey | never seen a value (not logged in, or that CLI is missing) |
 
-## 🧭 Is this the right tool for you?
+## Is this the right tool for you?
 
 This niche is crowded, and something else may fit you better:
 
@@ -88,7 +89,7 @@ This niche is crowded, and something else may fit you better:
 | Token counts and dollar costs | [ccusage](https://github.com/ccusage/ccusage) |
 | **Codex + Claude, in the zsh prompt itself** | **you're in the right place** |
 
-## 📦 Requirements
+## Requirements
 
 - **Linux** with a systemd user session — this is the tested path
 - zsh + [powerlevel10k](https://github.com/romkatv/powerlevel10k) (run `p10k configure` first if you haven't)
@@ -101,7 +102,7 @@ For the timer to keep running when you're logged out:
 > **macOS** ships a launchd agent and the installer handles it, but **it is
 > untested** — I don't have a Mac. Reports and PRs welcome.
 
-## 🔧 How it works
+## How it works
 
 Reading the quota is slow: **1.8 seconds** on a cold probe, because it
 cold-starts `codex app-server` and makes an OAuth call. Putting that in your
@@ -140,7 +141,7 @@ A few details that matter more than they look:
   shows up automatically when present.
 
 <details>
-<summary><b>🎨 Customizing</b> — colours, thresholds, icons, segment position, env vars</summary>
+<summary><b>Customizing</b> — colours, thresholds, icons, segment position, env vars</summary>
 
 <br>
 
@@ -161,7 +162,7 @@ typeset -g _AI_QUOTA_MAX_AGE=900
 
 Rerun `~/.local/bin/ai-quota-refresh` after changing colours, then `exec zsh`.
 
-**Moving the segments:** they're plain p10k segments named `codex_quota` and
+Moving the segments: they're plain p10k segments named `codex_quota` and
 `claude_quota` — reorder them in `POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS` (or move
 them to `POWERLEVEL9K_LEFT_PROMPT_ELEMENTS`) like any other.
 
@@ -177,13 +178,13 @@ typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(
 )
 ```
 
-**Environment variables**
+Environment variables:
 
 | Variable | Effect |
 |---|---|
-| `AI_QUOTA_CMD` | Override the probe command entirely. Must print ai-fuelgauge `--json` output. |
-| `AI_FUELGAUGE_DIR` | Where ai-fuelgauge lives. Default `~/.local/share/ai-fuelgauge`; honoured by the installer too. |
-| `AI_QUOTA_JITTER` | Seconds of random sleep before probing. Set to `20` in the launchd plist, since launchd has no `RandomizedDelaySec`. |
+| `AI_QUOTA_CMD` | Override the probe command entirely. It has to print ai-fuelgauge `--json` output. |
+| `AI_FUELGAUGE_DIR` | Where ai-fuelgauge lives. Default `~/.local/share/ai-fuelgauge`; the installer honours it too. |
+| `AI_QUOTA_JITTER` | Seconds of random sleep before probing. The launchd plist sets it to `20`, since launchd has no `RandomizedDelaySec`. |
 | `_AI_QUOTA_FILE` | Path to the pre-rendered prompt file. Default `~/.cache/ai-quota-prompt.zsh`. |
 | `_AI_QUOTA_MAX_AGE` | Shell-side staleness cutoff in seconds. Default `900`. |
 
@@ -192,7 +193,7 @@ typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(
 </details>
 
 <details>
-<summary><b>🩺 Troubleshooting</b> — the numbers are stale, missing, or never appeared</summary>
+<summary><b>Troubleshooting</b> — the numbers are stale, missing, or never appeared</summary>
 
 <br>
 
@@ -212,16 +213,16 @@ tail -n 20 ~/.cache/ai-quota-refresh.log
 systemctl --user list-timers ai-quota-refresh.timer
 ```
 
-- `--` everywhere → that CLI isn't installed, or you're not logged into it.
-- Numbers frozen with a `?` → the probe is failing; check the status line above.
-- Everything stops while you're logged out → `sudo loginctl enable-linger $USER`.
-- Segments don't appear at all → confirm `codex_quota` / `claude_quota` are in
+- `--` everywhere: that CLI isn't installed, or you're not logged into it.
+- Numbers frozen with a `?`: the probe is failing, so check the status line above.
+- Everything stops while you're logged out: `sudo loginctl enable-linger $USER`.
+- No segments at all: confirm `codex_quota` and `claude_quota` are in
   `POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS`, and that the `source` line in `~/.zshrc`
   comes *after* `source ~/.p10k.zsh`.
 
 </details>
 
-## ⚠️ Caveats
+## Caveats
 
 Please read these before installing.
 
@@ -242,7 +243,7 @@ Please read these before installing.
   much quota you have left. Nothing is sent anywhere else, and no quota numbers
   leave your machine.
 
-## 🧹 Uninstall
+## Uninstall
 
 ```bash
 ./uninstall.sh
@@ -252,7 +253,7 @@ Removes the timer, the scripts, and the lines it added to `~/.zshrc` and
 `~/.p10k.zsh` (restoring your `context` segment if you had it removed). It
 leaves ai-fuelgauge alone, since you may be using `ai-usage` directly.
 
-## 💙 Credits
+## Credits
 
 All the hard part — talking to Codex and Claude, refreshing tokens, normalizing
 the responses — is [**k7631159/ai-fuelgauge**](https://github.com/k7631159/ai-fuelgauge)
@@ -261,10 +262,6 @@ the responses — is [**k7631159/ai-fuelgauge**](https://github.com/k7631159/ai-
 Prompted by [powerlevel10k#2940](https://github.com/romkatv/powerlevel10k/issues/2940),
 which asked for exactly this and had no implementation.
 
-## 📄 License
+## License
 
 MIT — see [LICENSE](LICENSE).
-
-<p align="center">
-  <sub>If this saved you a <code>/usage</code>, a ⭐ is appreciated.</sub>
-</p>
