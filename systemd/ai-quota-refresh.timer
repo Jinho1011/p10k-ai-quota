@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh AI quota prompt artifact
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=__INTERVAL__min
+AccuracySec=30s
+RandomizedDelaySec=20
+Persistent=false
+
+[Install]
+WantedBy=timers.target

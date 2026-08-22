@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""Refresh the artifact read by the powerlevel10k codex_quota/claude_quota segments.
+
+Probes Codex + Claude through ai-fuelgauge, merges the result into a
+last-known-good state file, and writes a pre-rendered prompt string — colours
+included — so the shell never pays for a probe.
+
+https://github.com/Jinho1011/p10k-ai-quota
+"""
+from __future__ import annotations
+
+import json
+import math
+import os
+import random
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+HOME = os.path.expanduser("~")
+CACHE_DIR = os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".cache")
+STATE_FILE = os.path.join(CACHE_DIR, "ai-quota.state.json")
+PROMPT_FILE = os.path.join(CACHE_DIR, "ai-quota-prompt.zsh")
+
+DEFAULT_FUELGAUGE_DIR = os.path.join(HOME, ".local", "share", "ai-fuelgauge")
+
+PROBE_TIMEOUT = 75
+FRESH_MAX = 900  # 3 missed timer fires
+
+LABEL_FG = 244
+FG_OK, FG_WARN, FG_CRIT = 76, 178, 196
+WARN_BELOW, CRIT_BELOW = 25, 10
+
+# provider var -> (label, cells); cell = (state key, window label, minutes, optional)
+# Optional cells vanish when the account never exposed that window: Codex Plus
+# reports only the weekly limit, while higher tiers also report a 5-hour one.
+GROUPS = (
+    ("codex", "Codex", (
+        ("cx_5h", "5h", 300, True),
+        ("cx_w", "7d", 10080, False),
+    )),
+    ("claude", "Claude", (
+        ("cl_5h", "5h", 300, False),
+        ("cl_w", "7d", 10080, False),
+    )),
+)
+METRIC_KEYS = tuple(c[0] for _, _, cells in GROUPS for c in cells)
+
+INSTALL_HINT = (
+    "ai-fuelgauge not found. Install it with:\n"
+    "  git clone https://github.com/k7631159/ai-fuelgauge.git "
+    "~/.local/share/ai-fuelgauge\n"
+    "or point $AI_QUOTA_CMD at a command that prints its --json output."
+)
+
+
+def resolve_probe_cmd():
+    """Locate the ai-fuelgauge probe, or return None."""
+    override = os.environ.get("AI_QUOTA_CMD")
+    if override:
+        return shlex.split(override)
+    found = shutil.which("ai-usage")
+    if found:
+        return [found]
+    clone = os.environ.get("AI_FUELGAUGE_DIR") or DEFAULT_FUELGAUGE_DIR
+    script = os.path.join(clone, "ai_fuelgauge.py")
+    if os.path.isfile(script):
+        return [sys.executable, script]
+    return None
+
+
+def probe(cmd) -> dict:
+    """Return the ai-fuelgauge snapshot, or {} on any failure."""
+    try:
+        proc = subprocess.run(
+            cmd + ["--json", "--no-cache"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=PROBE_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"probe-failed: {e}", file=sys.stderr)
+        return {}
+    # Do not trust the exit code: --json returns 0 even when both probes errored.
+    try:
+        data = json.loads(proc.stdout.decode("utf-8", "replace"))
+    except ValueError as e:
+        print(f"probe-failed: unparseable json ({e})", file=sys.stderr)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def extract(block, want_minutes: int):
+    """Used-percent for the given window, selected by window_minutes. Never raises.
+
+    ai-fuelgauge copies the upstream slots into primary/secondary positionally
+    without sorting by length, so both slots must be scanned.
+    """
+    if not isinstance(block, dict) or block.get("error"):
+        return None
+    for slot in ("primary", "secondary"):
+        w = block.get(slot)
+        if not isinstance(w, dict) or w.get("window_minutes") != want_minutes:
+            continue
+        u = w.get("used_percent")
+        if isinstance(u, bool) or not isinstance(u, (int, float)):
+            continue
+        if not 0 <= u <= 100:
+            continue
+        return float(u)
+    return None
+
+
+def load_state() -> dict:
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(state, dict):
+        return {}
+    clean = {}
+    for key, entry in state.items():
+        if not isinstance(entry, dict):
+            continue
+        used, at = entry.get("used"), entry.get("at")
+        if isinstance(used, (int, float)) and not isinstance(used, bool) and isinstance(at, int):
+            clean[key] = {"used": float(used), "at": at}
+    return clean
+
+
+def write_atomic(path: str, text: str) -> None:
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def remaining(used: float) -> int:
+    return max(0, min(100, math.floor(100.0 - used)))
+
+
+def severity_fg(rem: int) -> int:
+    return FG_CRIT if rem < CRIT_BELOW else FG_WARN if rem < WARN_BELOW else FG_OK
+
+
+def render_group(provider, cells, state, now):
+    """Return (coloured, dimmed, plain) for one provider."""
+    lit, dim, plain = [], [], []
+    for key, window, _minutes, optional in cells:
+        entry = state.get(key)
+        if entry is None:
+            if optional:
+                # The account never exposed this window; say nothing about it.
+                continue
+            lit.append(f" {window} --")
+            dim.append(f" {window} --")
+            plain.append(f" {window} --")
+            continue
+        rem = remaining(entry["used"])
+        if now - entry["at"] > FRESH_MAX:
+            # Value can't be trusted, so show it but don't colour it.
+            lit.append(f" {window} {rem}%%?")
+            dim.append(f" {window} {rem}%%?")
+            plain.append(f" {window} {rem}%?")
+        else:
+            # Re-assert the label colour after the number: %f would reset to the
+            # terminal default and un-dim every label that follows.
+            lit.append(f" {window} %F{{{severity_fg(rem)}}}{rem}%%%F{{{LABEL_FG}}}")
+            dim.append(f" {window} {rem}%%")
+            plain.append(f" {window} {rem}%")
+    if not plain:
+        lit = dim = plain = [" --"]
+    head = f"%F{{{LABEL_FG}}}{provider}"
+    return head + "".join(lit), head + "".join(dim) + "?", provider + "".join(plain)
+
+
+def main() -> int:
+    # launchd has no RandomizedDelaySec; jitter here so a fleet of machines
+    # doesn't hit the endpoint in lockstep. systemd already jitters for us.
+    jitter = os.environ.get("AI_QUOTA_JITTER")
+    if jitter:
+        try:
+            time.sleep(random.uniform(0, float(jitter)))
+        except ValueError:
+            pass
+
+    cmd = resolve_probe_cmd()
+    if cmd is None:
+        # A missing probe is a setup error, not a stale reading. Say so loudly
+        # rather than silently letting the segment drift into STALE.
+        print(INSTALL_HINT, file=sys.stderr)
+        return 1
+
+    now = int(time.time())
+    data = probe(cmd)
+    codex = data.get("codex")
+    claude = data.get("claude")
+
+    fresh = {}
+
+    # Codex falls back to a stale sqlite snapshot when the app-server probe
+    # fails, so timestamp its metrics with as_of rather than now.
+    as_of = codex.get("as_of") if isinstance(codex, dict) else None
+    cx_at = min(now, int(as_of)) if isinstance(as_of, int) else now
+    for key, _, minutes, _ in GROUPS[0][2]:
+        u = extract(codex, minutes)
+        if u is not None:
+            fresh[key] = {"used": u, "at": cx_at}
+
+    if isinstance(claude, dict) and claude.get("status") == 200:
+        for key, _, minutes, _ in GROUPS[1][2]:
+            u = extract(claude, minutes)
+            if u is not None:
+                fresh[key] = {"used": u, "at": now}
+
+    # Only ever overwrite a metric this run actually resolved. A failed or
+    # partial probe deletes nothing; the metric just ages and picks up a "?".
+    state = load_state()
+    state.update(fresh)
+    write_atomic(STATE_FILE, json.dumps(state, separators=(",", ":")) + "\n")
+
+    lines = [f"_ai_quota_at={now}"]
+    plains = []
+    for var, provider, cells in GROUPS:
+        lit, dim, plain = render_group(provider, cells, state, now)
+        for suffix, value in (("text", lit), ("dim", dim)):
+            lines.append(
+                "_ai_{}_{}='{}'".format(var, suffix, value.replace("'", "'\\''"))
+            )
+        plains.append(plain)
+    write_atomic(PROMPT_FILE, "\n".join(lines) + "\n")
+
+    required = sum(1 for _, _, cells in GROUPS for c in cells if not c[3])
+    if len(fresh) >= required:
+        status = "ok"
+    elif fresh:
+        status = "partial"
+    else:
+        status = "probe-failed"
+    print(f"{status} " + " | ".join(plains), file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

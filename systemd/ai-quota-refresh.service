@@ -1,0 +1,13 @@
+[Unit]
+Description=Refresh AI quota prompt artifact (Codex + Claude)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=%h
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/ai-quota-refresh
+TimeoutStartSec=90
+Nice=10
+IOSchedulingClass=idle

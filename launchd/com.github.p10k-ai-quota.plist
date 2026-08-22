@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.github.p10k-ai-quota</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.local/bin/ai-quota-refresh</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <!-- ai-fuelgauge locates the codex and claude binaries with which(1). -->
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <!-- launchd has no RandomizedDelaySec; the script jitters instead. -->
+        <key>AI_QUOTA_JITTER</key>
+        <string>20</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>__INTERVAL__</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.cache/ai-quota-refresh.log</string>
+</dict>
+</plist>
