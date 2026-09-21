@@ -302,6 +302,15 @@ def main() -> int:
     # partial probe deletes nothing; the metric just ages and picks up a "?".
     state = load_state()
     state.update(fresh)
+
+    # The exception: when a provider answered but left out an optional window,
+    # the plan no longer has it (e.g. Codex Pro drops the 5-hour limit), so
+    # forget the old reading instead of showing it with a "?" forever.
+    for _, _, cells in GROUPS:
+        if any(c[0] in fresh for c in cells):
+            for key, _, _, optional in cells:
+                if optional and key not in fresh:
+                    state.pop(key, None)
     write_atomic(STATE_FILE, json.dumps(state, separators=(",", ":")) + "\n")
 
     # Without agy and without any past Gemini reading, hide the Gemini segment
