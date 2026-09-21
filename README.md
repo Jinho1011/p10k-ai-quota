@@ -27,12 +27,12 @@
 
 ---
 
-**Codex and Claude remaining quota, in your zsh prompt.** So you know what's
+**Codex, Claude and Gemini remaining quota, in your zsh prompt.** So you know what's
 left *before* you start something big, without running `/usage` or leaving the
 terminal.
 
 ```
- ~/work  ............................  Codex 7d 94%  │  Claude 5h 93% 7d 99%
+ ~/work  ......  Codex 7d 94%  │  Claude 5h 93% 7d 99%  │  Gemini 5h 100% 7d 94%
 >
 ```
 
@@ -95,6 +95,7 @@ This niche is crowded, and something else may fit you better:
 - zsh + [powerlevel10k](https://github.com/romkatv/powerlevel10k) (run `p10k configure` first if you haven't)
 - Python 3.7+, git
 - [Codex CLI](https://github.com/openai/codex) and/or [Claude Code](https://claude.com/claude-code), installed and logged in. Either one alone works; the missing one shows `--`.
+- Optional: the Antigravity CLI (`agy`) 1.1.11+, logged in, for Gemini quota. Without `agy` the Gemini segment stays hidden.
 
 For the timer to keep running when you're logged out:
 `sudo loginctl enable-linger $USER`. The installer checks and tells you.
@@ -115,13 +116,14 @@ So the work is moved off the prompt entirely:
  systemd timer (every 5 min)
         │
         ▼
- ai-quota-refresh ── ai-fuelgauge ──▶ codex app-server + Claude OAuth
+ ai-quota-refresh ─┬─ ai-fuelgauge ──▶ codex app-server + Claude OAuth
+        │         └─ agy -p /quota ──▶ Gemini quota (run in parallel)
         │
         ├──▶ ~/.cache/ai-quota.state.json    last known good, per metric
         └──▶ ~/.cache/ai-quota-prompt.zsh    pre-rendered, colours baked in
                      ▲
                      │  source (0.047 ms)
-        prompt_codex_quota / prompt_claude_quota
+        prompt_codex_quota / prompt_claude_quota / prompt_gemini_quota
 ```
 
 A few details that matter more than they look:
@@ -162,8 +164,8 @@ typeset -g _AI_QUOTA_MAX_AGE=900
 
 Rerun `~/.local/bin/ai-quota-refresh` after changing colours, then `exec zsh`.
 
-Moving the segments: they're plain p10k segments named `codex_quota` and
-`claude_quota` — reorder them in `POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS` (or move
+Moving the segments: they're plain p10k segments named `codex_quota`,
+`claude_quota` and `gemini_quota` — reorder them in `POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS` (or move
 them to `POWERLEVEL9K_LEFT_PROMPT_ELEMENTS`) like any other.
 
 If the installer couldn't patch your `~/.p10k.zsh`, add them by hand:
@@ -173,6 +175,7 @@ typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=(
     ...
     codex_quota
     claude_quota
+    gemini_quota
     newline
     ...
 )
@@ -216,7 +219,8 @@ systemctl --user list-timers ai-quota-refresh.timer
 - `--` everywhere: that CLI isn't installed, or you're not logged into it.
 - Numbers frozen with a `?`: the probe is failing, so check the status line above.
 - Everything stops while you're logged out: `sudo loginctl enable-linger $USER`.
-- No segments at all: confirm `codex_quota` and `claude_quota` are in
+- No Gemini segment: `agy` isn't on the timer's PATH, or has never returned a reading.
+- No segments at all: confirm `codex_quota`, `claude_quota` and `gemini_quota` are in
   `POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS`, and that the `source` line in `~/.zshrc`
   comes *after* `source ~/.p10k.zsh`.
 
@@ -226,9 +230,10 @@ systemctl --user list-timers ai-quota-refresh.timer
 
 Please read these before installing.
 
-- **Both upstream endpoints are unofficial.** `codex app-server` is marked
+- **The upstream endpoints are unofficial.** `codex app-server` is marked
   experimental by OpenAI, and Claude's `/api/oauth/usage` is undocumented and
-  meant for Anthropic's own apps. Either can break without warning. When they
+  meant for Anthropic's own apps. Gemini comes from `agy -p /quota`, which is
+  documented but only in agy's changelog. Any of them can break without warning. When they
   do, the segment degrades to `94%?` rather than breaking your prompt — but it
   will be wrong until it's fixed.
 - **Don't shorten the interval below 5 minutes.** ai-fuelgauge warns that
@@ -239,7 +244,7 @@ Please read these before installing.
   priority. If you notice it, `--interval 10` halves the cost and still stays
   well inside the 15-minute staleness window.
 - **The macOS path is untested.**
-- This reads your local Codex/Claude credentials only to ask those services how
+- This reads your local Codex/Claude/Antigravity credentials only to ask those services how
   much quota you have left. Nothing is sent anywhere else, and no quota numbers
   leave your machine.
 

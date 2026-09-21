@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install p10k-ai-quota: Codex + Claude remaining quota in your zsh prompt.
+# Install p10k-ai-quota: Codex + Claude + Gemini remaining quota in your zsh prompt.
 # https://github.com/Jinho1011/p10k-ai-quota
 set -euo pipefail
 
@@ -92,6 +92,7 @@ fi
 for c in codex claude; do
   command -v "$c" >/dev/null 2>&1 || warn "$c not on PATH — its quota will show as '--'"
 done
+command -v agy >/dev/null 2>&1 || warn "agy not on PATH — the Gemini segment stays hidden"
 
 # ------------------------------------------------------------ [1/6] fuelgauge
 step 1 "ai-fuelgauge (the thing that actually reads the quotas)"
@@ -163,15 +164,32 @@ fi
 step 5 "Adding the segments to your right prompt"
 patch_p10k() {
   [ -f "$P10K" ] || { warn "no ~/.p10k.zsh — skipping (see README for manual steps)"; return 0; }
-  if grep -qF 'codex_quota' "$P10K"; then skip "already present"; return 0; fi
+  if grep -qF 'gemini_quota' "$P10K"; then skip "already present"; return 0; fi
+  # Installs from before Gemini support: add just the new segment after Claude.
+  if grep -qF 'codex_quota' "$P10K"; then
+    if ! grep -qE "^[[:space:]]*claude_quota[[:space:]]+$MARKER\$" "$P10K"; then
+      warn "claude_quota was moved or edited; add 'gemini_quota' by hand — see README"
+      return 0
+    fi
+    backup "$P10K"
+    if [ "$DRY_RUN" = 1 ]; then printf '  DRY add gemini_quota after claude_quota\n'; return 0; fi
+    awk -v marker="$MARKER" '
+      { print }
+      !added && $1 == "claude_quota" && index($0, marker) {
+        print "    gemini_quota            " marker; added=1
+      }
+    ' "$P10K" > "$P10K.tmp$$" && mv "$P10K.tmp$$" "$P10K"
+    ok "gemini_quota added"
+    return 0
+  fi
   if ! grep -qE '^\s*typeset -g POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS=\(' "$P10K"; then
     warn "POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS not found in ~/.p10k.zsh"
-    warn "add 'codex_quota' and 'claude_quota' to it by hand — see README"
+    warn "add 'codex_quota', 'claude_quota' and 'gemini_quota' to it by hand — see README"
     return 0
   fi
   backup "$P10K"
   if [ "$DRY_RUN" = 1 ]; then
-    printf '  DRY add codex_quota + claude_quota to RIGHT_PROMPT_ELEMENTS\n'
+    printf '  DRY add codex_quota + claude_quota + gemini_quota to RIGHT_PROMPT_ELEMENTS\n'
     if [ "$REMOVE_CONTEXT" = 1 ]; then printf '  DRY comment out the context segment\n'; fi
     return 0
   fi
@@ -182,17 +200,20 @@ patch_p10k() {
     inblk && !added && /^[[:space:]]*#+[[:space:]]*=+\[ Line #2 \]=+/ {
       print "    codex_quota             " marker
       print "    claude_quota            " marker
+      print "    gemini_quota            " marker
       added=1; print; next
     }
     inblk && !added && /^[[:space:]]*newline([[:space:]]|$)/ {
       print "    codex_quota             " marker
       print "    claude_quota            " marker
+      print "    gemini_quota            " marker
       added=1; print; next
     }
     inblk && /^[[:space:]]*\)[[:space:]]*$/ {
       if (!added) {
         print "    codex_quota             " marker
         print "    claude_quota            " marker
+        print "    gemini_quota            " marker
         added=1
       }
       inblk=0; print; next
@@ -202,7 +223,7 @@ patch_p10k() {
     }
     { print }
   ' "$P10K" > "$P10K.tmp$$" && mv "$P10K.tmp$$" "$P10K"
-  ok "codex_quota + claude_quota added"
+  ok "codex_quota + claude_quota + gemini_quota added"
   if [ "$REMOVE_CONTEXT" = 1 ]; then ok "context segment commented out"; fi
   return 0
 }
@@ -256,6 +277,6 @@ if "$BIN_DIR/ai-quota-refresh"; then
   say "Done. Run 'exec zsh' to reload your prompt."
 else
   say ""
-  warn "the first probe failed — check that 'codex' and 'claude' are logged in."
+  warn "the first probe failed — check that 'codex', 'claude' and 'agy' are logged in."
   warn "run '$BIN_DIR/ai-quota-refresh' by hand to see the error."
 fi

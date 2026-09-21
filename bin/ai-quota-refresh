@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Refresh the artifact read by the powerlevel10k codex_quota/claude_quota segments.
+"""Refresh the artifact read by the powerlevel10k codex/claude/gemini_quota segments.
 
-Probes Codex + Claude through ai-fuelgauge, merges the result into a
+Probes Codex + Claude through ai-fuelgauge and Gemini through Antigravity's
+`agy -p /quota`, merges the result into a
 last-known-good state file, and writes a pre-rendered prompt string — colours
 included — so the shell never pays for a probe.
 
@@ -46,7 +47,13 @@ GROUPS = (
         ("cl_5h", "5h", 300, False),
         ("cl_w", "7d", 10080, False),
     )),
+    ("gemini", "Gemini", (
+        ("gm_5h", "5h", 300, False),
+        ("gm_w", "7d", 10080, False),
+    )),
 )
+# agy /quota bucket id per Gemini state key.
+AGY_BUCKETS = {"gm_5h": "gemini-5h", "gm_w": "gemini-weekly"}
 METRIC_KEYS = tuple(c[0] for _, _, cells in GROUPS for c in cells)
 
 INSTALL_HINT = (
@@ -92,6 +99,62 @@ def probe(cmd) -> dict:
         return {}
     return data if isinstance(data, dict) else {}
 
+
+def start_agy():
+    """Launch `agy -p /quota` in the background, or return None if agy is absent.
+
+    It runs alongside the ai-fuelgauge probe so the two together stay inside
+    the unit's TimeoutStartSec. /quota starts no agent turn and spends no quota.
+    """
+    agy = shutil.which("agy")
+    if agy is None:
+        return None
+    try:
+        return subprocess.Popen(
+            [agy, "-p", "/quota", "--output-format", "json"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as e:
+        print(f"agy-failed: {e}", file=sys.stderr)
+        return None
+
+def finish_agy(proc, deadline: float) -> dict:
+    """Collect the /quota JSON started by start_agy, or {} on any failure."""
+    if proc is None:
+        return {}
+    try:
+        out, _ = proc.communicate(timeout=max(1.0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        print("agy-failed: timeout", file=sys.stderr)
+        return {}
+    try:
+        data = json.loads(out.decode("utf-8", "replace"))
+    except ValueError as e:
+        print(f"agy-failed: unparseable json ({e})", file=sys.stderr)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+def extract_agy(data: dict, bucket_id: str):
+    """Used-percent for one agy /quota bucket. Never raises."""
+    cmd = data.get("command")
+    body = cmd.get("data") if isinstance(cmd, dict) else None
+    groups = body.get("groups") if isinstance(body, dict) else None
+    if not isinstance(groups, list):
+        return None
+    for group in groups:
+        buckets = group.get("buckets") if isinstance(group, dict) else None
+        for b in buckets if isinstance(buckets, list) else ():
+            if not isinstance(b, dict) or b.get("id") != bucket_id:
+                continue
+            f = b.get("remaining_fraction")
+            if isinstance(f, bool) or not isinstance(f, (int, float)) or not 0 <= f <= 1:
+                return None
+            return (1.0 - float(f)) * 100.0
+    return None
 
 def extract(block, want_minutes: int):
     """Used-percent for the given window, selected by window_minutes. Never raises.
@@ -206,6 +269,8 @@ def main() -> int:
         return 1
 
     now = int(time.time())
+    agy_proc = start_agy()
+    agy_deadline = time.monotonic() + PROBE_TIMEOUT
     data = probe(cmd)
     codex = data.get("codex")
     claude = data.get("claude")
@@ -227,15 +292,27 @@ def main() -> int:
             if u is not None:
                 fresh[key] = {"used": u, "at": now}
 
+    agy_data = finish_agy(agy_proc, agy_deadline)
+    for key, bucket_id in AGY_BUCKETS.items():
+        u = extract_agy(agy_data, bucket_id)
+        if u is not None:
+            fresh[key] = {"used": u, "at": now}
+
     # Only ever overwrite a metric this run actually resolved. A failed or
     # partial probe deletes nothing; the metric just ages and picks up a "?".
     state = load_state()
     state.update(fresh)
     write_atomic(STATE_FILE, json.dumps(state, separators=(",", ":")) + "\n")
 
+    # Without agy and without any past Gemini reading, hide the Gemini segment
+    # instead of showing "-- --" forever to people who don't use Antigravity.
+    groups = GROUPS
+    if agy_proc is None and not any(k in state for k in AGY_BUCKETS):
+        groups = tuple(g for g in GROUPS if g[0] != "gemini")
+
     lines = [f"_ai_quota_at={now}"]
     plains = []
-    for var, provider, cells in GROUPS:
+    for var, provider, cells in groups:
         lit, dim, plain = render_group(provider, cells, state, now)
         for suffix, value in (("text", lit), ("dim", dim)):
             lines.append(
@@ -244,7 +321,7 @@ def main() -> int:
         plains.append(plain)
     write_atomic(PROMPT_FILE, "\n".join(lines) + "\n")
 
-    required = sum(1 for _, _, cells in GROUPS for c in cells if not c[3])
+    required = sum(1 for _, _, cells in groups for c in cells if not c[3])
     if len(fresh) >= required:
         status = "ok"
     elif fresh:

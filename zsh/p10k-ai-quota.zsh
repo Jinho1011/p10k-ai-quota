@@ -15,10 +15,12 @@ typeset -g _AI_QUOTA_MAX_AGE=900
 # Colours are baked into the text. These are only a fallback.
 typeset -g POWERLEVEL9K_CODEX_QUOTA_FOREGROUND=244
 typeset -g POWERLEVEL9K_CLAUDE_QUOTA_FOREGROUND=244
+typeset -g POWERLEVEL9K_GEMINI_QUOTA_FOREGROUND=244
 
 # Shared loader: pick the coloured variant when fresh, the dimmed one when not.
-function _ai_quota_render() {   # $1 = codex | claude
+function _ai_quota_render() {   # $1 = codex | claude | gemini
   local _ai_codex_text= _ai_codex_dim= _ai_claude_text= _ai_claude_dim=
+  local _ai_gemini_text= _ai_gemini_dim=
   local -i _ai_quota_at=0
   [[ -r $_AI_QUOTA_FILE ]] || return
   source $_AI_QUOTA_FILE 2>/dev/null || return
@@ -26,6 +28,7 @@ function _ai_quota_render() {   # $1 = codex | claude
   case $1 in
     codex)  live=$_ai_codex_text;  dim=$_ai_codex_dim  ;;
     claude) live=$_ai_claude_text; dim=$_ai_claude_dim ;;
+    gemini) live=$_ai_gemini_text; dim=$_ai_gemini_dim ;;
   esac
   # The artifact is written once and read by every shell for minutes afterwards,
   # so only the shell can tell that the file itself went stale (timer masked,
@@ -37,6 +40,7 @@ function _ai_quota_render() {   # $1 = codex | claude
 
 function prompt_codex_quota()  { _ai_quota_render codex  }
 function prompt_claude_quota() { _ai_quota_render claude }
+function prompt_gemini_quota() { _ai_quota_render gemini }
 
 # No instant_prompt_*: p10k records those `p10k segment` calls once and replays
 # them at the next shell start, which would replay a stale number.
